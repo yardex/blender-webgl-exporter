@@ -8,6 +8,6 @@ This page tells you where you should drop the script file.
 = Details =
 
   * Go to the "Downloads" tab and download the "WebGLExport.py" file and save it in:
-  * Windows: /Blender Foundation/Blender/.blender/scripts/ (Blender .2.46: C:\Documents and Settings\<username>\Application Data\Blender Foundation\Blender\.blender\scripts)
+  * Windows: /Blender Foundation/Blender/.blender/scripts/ (Blender .2.46: C:\Documents and Settings\YOURUSERNAME\Application Data\Blender Foundation\Blender\.blender\scripts)
   * Mac: /Applications/blender/blender.app/Contents/MacOS/.blender/scripts/
   * Linux: ~/.blender/scripts
