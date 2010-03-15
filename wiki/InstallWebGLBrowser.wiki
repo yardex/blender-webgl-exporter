@@ -3,7 +3,7 @@
 
 = Introduction =
 
-This is where you find WebGL-enabled browsers.
+This is where you can find WebGL-enabled browsers.
 
 = Details =
 
