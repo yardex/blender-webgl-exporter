@@ -103,6 +103,145 @@ def export_scenejs(class_name, mesh):
 	
 	return s
 
+def export_scenejson(class_name, mesh):
+	"""Exports the current mesh as a JSON model.
+
+	Developed by johnvillarzavatti [at] gmail [dot] com
+
+	returns an escaped string valid for any JSON parser
+	"""
+	mats = "\"m\":["
+	
+	mtemp = ""
+	for m in mesh.materials:
+		mat = "{"
+		flags = m.getMode()
+		shaders = ""
+		
+		if flags & Material.Modes['SHADELESS']:
+			shaders += ',"fb"' # Fullbright
+			
+		if flags & Material.Modes['HALO']:
+			shaders += ',"ha"' # Halo
+			
+		mtexs = m.getTextures()
+		ts = ""
+		for t in mtexs:
+			if t:
+				if t.tex.type == Texture.Types.IMAGE:
+					toks = t.tex.image.filename.split("\\")
+					pipe = "" # Stages of the pipeline this texture is involved in
+					if t.mapto & Texture.MapTo.COL: # Color modulation
+						pipe += ",tx_m"
+					
+					if t.mapto & Texture.MapTo.DISP: # Bump mapping
+						pipe += ",bump"
+						if shaders.find('"bm"')<0:
+							shaders += ',"bm"'
+						
+					ts += ',{"fn":"'+toks[-1]
+					if len(pipe)>0:
+						ts +='","pipe":"'+pipe[1:]
+					ts += '"}'
+
+		mat += "\"shaders\":[" + shaders[1:] + "],"
+		mat += "\"texs\":["+ts[1:]+"]"
+		mat += "}"
+		mtemp += ","+mat
+	mats += mtemp[1:]
+	mats += "]"
+	
+	# Init arrays for each material group
+	a_verts = list()
+	a_idxs = list()
+	for x in range(len(mesh.materials)):
+		a_verts.append("")
+		a_idxs.append(0)
+			
+	a_norms = list()
+	for x in range(len(mesh.materials)):
+		a_norms.append("")
+			
+	a_indices = list()
+	for x in range(len(mesh.materials)):
+		a_indices.append("")
+
+	a_uvs = list()
+	for x in range(len(mesh.materials)):
+		a_uvs.append("")
+		
+	a_vcs = list()
+	for x in range(len(mesh.materials)):
+		a_vcs.append("")
+		
+	# Now dump the faces
+	for f in mesh.faces:
+		for v in f.verts:
+			a_verts[f.mat] += ",%.2f,%.2f,%.2f" % (v.co.x, v.co.z, -v.co.y)
+			if (exp_normals == 1):
+				a_norms[f.mat] += ",%.2f,%.2f,%.2f" % (v.no.x, v.no.z, -v.no.y)
+			a_indices[f.mat] += ",%i" % (a_idxs[f.mat])
+			a_idxs[f.mat] += 1
+		
+		if (mesh.faceUV):
+			for uv in f.uv:
+				a_uvs[f.mat] += ",%.4f,%.4f" % (uv[0], uv[1])
+				#a_uvs[f.mat] += ",%.4f,%.4f,%.4f,%.4f,%.4f,%.4f" % (f.uv[0][0], f.uv[0][1], f.uv[1][0], f.uv[1][1], f.uv[2][0], f.uv[2][1])
+			
+		# Currently not working because i don't use it -- john
+		#if (mesh.vertexColors):
+		#	for color in f.col:
+		#		a_vcs[f.mat] += ",%.2f,%.2f,%.2f,%.2f" % ( color.r / 255.0, color.g / 255.0, color.b / 255.0, color.a / 255.0)
+	
+	# Now compact all face arrays into each material group
+	indices = "\"f\":["
+	p_indices = ""
+	for a in a_indices:
+		if len(a)>0:
+			p_indices += ",[" + a[1:] + "]"
+	indices += p_indices[1:] + "]"
+	
+	texcoords = "\"uvs\":["
+	p_texcoords = ""
+	for a in a_uvs:
+		p_texcoords += ",[" + a[1:] + "]"
+	texcoords += p_texcoords[1:]+"]"
+	
+	vertices = "\"v\":["
+	p_vertices = ""
+	for a in a_verts:
+		p_vertices += ",[" + a[1:] + "]"
+	vertices += p_vertices[1:]+"]"
+	
+	normals = "\"n\":["
+	p_normals = ""
+	for a in a_norms:
+		p_normals += ",[" + a[1:] + "]"
+	normals += p_normals[1:]+"]"
+	
+	p_vcols = ""
+	for a in a_vcs:
+		if len(a)>0:
+			p_vcols += ",[" + a[1:] + "]"
+	if len(p_vcols)>0:
+		vcols = "\"vcs\":[" + p_vcols[1:] + "]"
+	else:
+		vcols = ""
+	
+	# Now build our output
+	s = "{"+vertices + ","
+	if ((exp_normals == 1) and (len(normals) > 0)):
+		s += normals + ","
+	s += indices + ","
+	s += texcoords + ","
+	if (len(vcols) > 0):
+		s += vcols + ","
+	s += mats
+	
+	s += "}"
+	
+	return s
+	
 def export_native(class_name, mesh, ob):
 	s = "var BlenderExport = {};\n"
 	s += "BlenderExport.%s = {};\n" % (class_name)
@@ -295,8 +434,12 @@ def bevent(evt):
 			class_name = ob.name.replace(".", "")
 			ext = ""
 			if(engine_menu.val ==4): ext = ".xml"
+			elif(engine_menu.val == 6): ext = ".json"
 			else: ext = ".js"
-			out = open(file_button.val+""+class_name+ext, 'w')#file(file_button.val, 'w')
+			if (len(obs) == 1):
+				out = open(file_button.val, 'w') # If only one object use the old behavior, i.e. no name mangling
+			else:
+				out = open(file_button.val+""+class_name+ext, 'w')#file(file_button.val, 'w')
 			data_string = ""
 
 			if (engine_menu.val == 1):
@@ -309,6 +452,8 @@ def bevent(evt):
 				data_string = export_glge_xml(class_name, me)
 			elif(engine_menu.val == 5):
 				data_string = export_copperlicht(class_name, me)
+			elif(engine_menu.val == 6):
+				data_string = export_scenejson(class_name, me)
 
 			out.write(data_string)
 			out.close()
@@ -317,6 +462,8 @@ def bevent(evt):
 	elif (evt== EVENT_BROWSEFILE):
 		if (engine_menu.val == 4):
 			Window.FileSelector(FileSelected,"Export .xml", exp_file_name)
+		elif (engine_menu.val == 6):
+			Window.FileSelector(FileSelected,"Export .json", exp_file_name)
 		else:
 			Window.FileSelector(FileSelected,"Export .js", exp_file_name)
 		Draw.Redraw(1)
@@ -338,7 +485,7 @@ def draw():
 	glClear(GL_COLOR_BUFFER_BIT)
 	glRasterPos2i(40, 240)
 
-	engine_name = "Native WebGL%x1|SceneJS%x2|GLGE JS%x3|GLGE XML%x4"
+	engine_name = "Native WebGL%x1|SceneJS%x2|GLGE JS%x3|GLGE XML%x4|JSON%x6"
 	engine_menu = Draw.Menu(engine_name, EVENT_NOEVENT, 40, 100, 200, 20, engine_menu.val, "Choose your engine")
 
 	file_button = Draw.String('File location: ', EVENT_NOEVENT, 40, 70, 250, 20, file_button.val, 255) 
