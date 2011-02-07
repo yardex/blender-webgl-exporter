@@ -13,6 +13,9 @@ Firefox nightly builds:
 Webkit nightly builds:
   * http://nightly.webkit.org/
 
+Google Chrome:
+  * http://www.google.com/chrome/
+
 Chromium (Windows)
   * http://build.chromium.org/buildbot/continuous/win/LATEST/
 Chromium (Mac)
