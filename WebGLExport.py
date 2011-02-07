@@ -19,7 +19,7 @@ Tooltip: 'WebGL JavaScript'
 #
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	See the
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
@@ -241,7 +241,34 @@ def export_scenejson(class_name, mesh):
 	s += "}"
 	
 	return s
+
+def export_objectJson(ob):
+	obj = "{\"name\":\""+ob.name+"\","
 	
+	ipo = ob.getIpo()
+	
+	if (not (ipo == None)):
+		ipos = ""
+	
+		for crv in ipo.curves:
+			ipos += ",{\"curve\":\"%s\",\"emode\":%i,\"imode\":%i,\"bezs\":[" % (crv.name, crv.extend, crv.interpolation)
+			bzs = ""
+			for bp in crv.bezierPoints:
+				h1, p, h2 = bp.vec
+				bzs += ",%.4f,%.4f,%.4f,%.4f,%.4f,%.4f" % (h1[0], h1[1], p[0], p[1], h2[0], h2[1])
+				#bzs += ",%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f" % (h1[0], h1[1], h1[2], p[0], p[1], p[2], h2[0], h2[1], h2[2])
+			ipos += bzs[1:]+"]}"
+	
+		obj += "\"ipos\":[" + ipos[1:] + "],"
+	
+	me = Mesh.New()
+	me.getFromObject(ob,0)
+	obj += "\"mesh\":" + export_scenejson(ob.name.replace(".", ""), me)
+	
+	obj += "}"
+	
+	return obj
+		
 def export_native(class_name, mesh, ob):
 	s = "var BlenderExport = {};\n"
 	s += "BlenderExport.%s = {};\n" % (class_name)
@@ -427,20 +454,31 @@ def bevent(evt):
 			Draw.Exit()
 			return
 		
+		singleFile = 0
+		if(engine_menu.val == 6):
+			singleFile = 1
+			out = open(file_button.val, 'w')
+			scn = Scene.GetCurrent()
+			context = scn.getRenderingContext()
+			data_string = "{\"scene\":1,\"fps\":%i,\"objs\":[" % (context.fps)
+			comaSeparate = 0;
+			
 		# export all object names
 		for ob in obs:
 			me = Mesh.New()
 			me.getFromObject(ob,0)
 			class_name = ob.name.replace(".", "")
-			ext = ""
-			if(engine_menu.val ==4): ext = ".xml"
-			elif(engine_menu.val == 6): ext = ".json"
-			else: ext = ".js"
-			if (len(obs) == 1):
-				out = open(file_button.val, 'w') # If only one object use the old behavior, i.e. no name mangling
-			else:
-				out = open(file_button.val+""+class_name+ext, 'w')#file(file_button.val, 'w')
-			data_string = ""
+			
+			if (not singleFile):
+				ext = ""
+			
+			if (not singleFile):
+				if(engine_menu.val ==4):
+					ext = ".xml"
+				else:
+					ext = ".js"
+				out = open(file_button.val+""+class_name+ext, 'w')
+				data_string = ""
 
 			if (engine_menu.val == 1):
 				data_string = export_native(class_name, me, ob)
@@ -453,11 +491,22 @@ def bevent(evt):
 			elif(engine_menu.val == 5):
 				data_string = export_copperlicht(class_name, me)
 			elif(engine_menu.val == 6):
-				data_string = export_scenejson(class_name, me)
+				# Fix this: must include object's IpoCurves
+				#data_string = data_string+export_scenejson(class_name, me)
+				if (not comaSeparate):
+					comaSeparate = 1
+				else:
+					data_string = data_string + ","
+				data_string = data_string+export_objectJson(ob)
 
-			out.write(data_string)
-			out.close()
+			if (not singleFile):
+				out.write(data_string)
+				out.close()
 		
+		if (singleFile):
+			out.write(data_string+"]}")
+			out.close()
+			
 		Draw.PupMenu("Export Successful")
 	elif (evt== EVENT_BROWSEFILE):
 		if (engine_menu.val == 4):
