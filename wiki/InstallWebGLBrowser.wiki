@@ -15,6 +15,7 @@ Webkit nightly builds:
 
 Google Chrome:
   * http://www.google.com/chrome/
+  (Note: It is likely that Chrome will drop support for WebGL in Windows XP soon)
 
 Chromium (Windows)
   * http://build.chromium.org/buildbot/continuous/win/LATEST/
