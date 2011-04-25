@@ -181,8 +181,8 @@ def export_scenejson(class_name, mesh):
         # Quads not supported
         for v_idx in f.vertices:
             v = mesh.vertices[v_idx]
-            a_verts[f.material_index] += ",%.2f,%.2f,%.2f" % (v.co[0], v.co[1], v.co[2])
-            a_norms[f.material_index] += ",%.2f,%.2f,%.2f" % (v.normal[0], v.normal[1], v.normal[2])
+            a_verts[f.material_index] += ",%.2f,%.2f,%.2f" % (v.co[0], v.co[2], v.co[1])
+            a_norms[f.material_index] += ",%.2f,%.2f,%.2f" % (v.normal[0], v.normal[2], v.normal[1])
             #a_indices[f.mat] += ",%i" % (a_idxs[f.mat])
             #t_indices = ",%i%s" % (a_idxs[f.material_index], t_indices)
             a_indices[f.material_index] += ",%i" % a_idxs[f.material_index]
