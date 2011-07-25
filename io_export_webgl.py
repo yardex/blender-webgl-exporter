@@ -39,64 +39,17 @@ if "bpy" in locals():
     if "io_export_webgl" in locals():
         imp.reload(io_export_ply)
         
-#import Blender
-#from Blender import *
 import bpy
 import os
-#from Blender.BGL import *
 
 from bpy.props import CollectionProperty, StringProperty, BoolProperty
-from io_utils import ExportHelper
-
-EVENT_NOEVENT = 1
-EVENT_DRAW = 2
-EVENT_EXIT = 3
-EVENT_EXPORT = 4
-EVENT_BROWSEFILE = 5
-
-def export_scenejs(class_name, mesh):
-    s = "var BlenderExport = {};\n"
-    s += "BlenderExport.%s = function() {\n" % (class_name)
-    s += "return SceneJS.geometry({\n"
-    s += "type: \'%s\',\n" % (class_name)
-    
-    vertices = "vertices : ["
-    indices = "indices : ["
-    indexcount = 0;
-
-    for f in mesh.faces:
-        vertices += "[%.6f,%.6f,%.6f],[%.6f,%.6f,%.6f],[%.6f,%.6f,%.6f]," % (f.verts[0].co.x, f.verts[0].co.y, f.verts[0].co.z,f.verts[1].co.x, f.verts[1].co.y, f.verts[1].co.z,f.verts[2].co.x, f.verts[2].co.y, f.verts[2].co.z)
-        indices += "[%i,%i,%i]," % (indexcount,indexcount+1,indexcount+2)
-        indexcount += 3
-    
-    indices += "],\n";
-    vertices += "],\n";
-
-    s += vertices
-    s += indices
-    
-    if(exp_normals == 1):
-        s += "normals : ["
-        for v in mesh.verts: 
-            s += "[%.6f, %.6f, %.6f]," % (v.no.x, v.no.y, v.no.z)
-    
-        s += "],\n"
-    if (mesh.vertexColors):
-        s += "colors : ["
-        for face in mesh.faces:
-            for (vert, color) in zip(face.verts, face.col):
-                s += "[%.6f,%.6f,%.6f,%.6f]," % ( color.r / 255.0, color.g / 255.0, color.b / 255.0, color.a / 255.0)
-        s += "]\n"
-    if (mesh.faceUV):
-        s += "texCoords : ["
-        for face in mesh.faces:
-            s += "[%.6f,%.6f],[%.6f,%.6f],[%.6f,%.6f]," % (face.uv[0][0], face.uv[0][1], face.uv[1][0], face.uv[1][1], face.uv[2][0], face.uv[2][1])
-                
-        s += "]\n"
-    
-    s += "});\n};"
-    
-    return s
+#from io_utils import ExportHelper
+from bpy_extras.io_utils import ExportHelper
+import struct
+import base64
+import binascii
+import json
+from functools import reduce
 
 def export_scenejson(class_name, mesh):
     """Exports the current mesh as a JSON model.
@@ -251,7 +204,34 @@ def export_scenejson(class_name, mesh):
     
     return s
 
-def export_objectJson(ob, me):
+def to_fixed16(flt):
+    i_part = abs(int(flt))
+    d_part = int(abs(flt - i_part)*256) & 255
+    
+    result = (i_part << 8) | d_part
+    
+    if flt < 0:
+        result = -result
+        
+    return result
+    
+def export_animdata(ob, scene):
+    frame_start = scene.frame_start
+    frame_end = scene.frame_end
+    
+    frames = []
+    
+    for frame in range(frame_start, frame_end + 1):
+        scene.frame_set(frame)
+        me = ob.to_mesh(scene, True, 'PREVIEW')
+        
+        numverts = len(me.vertices)
+        
+        frames.append(struct.pack(">%dh" % (numverts * 3), *[to_fixed16(ax) for v in me.vertices for ax in v.co]))
+        
+    return base64.encodebytes(bytes().join(frames)).decode('ascii')[:-1]
+        
+def export_objectJson(ob, me, scene):
     obj = "{\"name\":\""+ob.name+"\","
     
     #ipo = ob.getIpo()
@@ -278,303 +258,115 @@ def export_objectJson(ob, me):
     
     obj += "\"mesh\":" + export_scenejson(ob.name.replace(".", ""), me)
     
+    obj = "".join([obj, ",\"anim_data\": \"", export_animdata(ob, scene), "\""])
+    
     obj += "}"
     
     return obj
+    
+def object_to_dict(scene, object, binary=False):
+    outp = {'name': object.name}
+    
+    armature = object.find_armature()
+    if armature is not None:
+        # Put the armature in REST position
+        armature_proper = bpy.data.armatures[armature.name]
+        #armature.pose_position = 'REST'
         
-def export_native(class_name, mesh, ob):
-    s = "var BlenderExport = {};\n"
-    s += "BlenderExport.%s = {};\n" % (class_name)
+    # Convert all the mesh's faces to triangles
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.quads_convert_to_tris()
+    bpy.context.scene.update()
+    bpy.ops.object.mode_set(mode='OBJECT') # set it in object
     
-    vertices = "BlenderExport.%s.vertices = [" % (class_name)
-    indices = "BlenderExport.%s.indices = [" % (class_name)
-    indexcount = 0;
+    me = object.to_mesh(scene, True, "PREVIEW")
+    reduce(lambda x,y: max(x,y), [grp.group for v in me.vertices for grp in v.groups])
+    ome = {}
     
-    for f in mesh.faces:
-        vertices += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.verts[0].co.x, f.verts[0].co.y, f.verts[0].co.z,f.verts[1].co.x, f.verts[1].co.y, f.verts[1].co.z,f.verts[2].co.x, f.verts[2].co.y, f.verts[2].co.z)
-        indexcount += 3
+    numverts = len(me.vertices)
+    numfaces = len(me.faces)
     
-    indices += "];\n";
-    vertices += "];\n";
-
-    s += vertices
-    s += indices
-    
-    s += "for(var i=0;i<%s;i++) BlenderExport.%s.indices.push(i);\n" % (indexcount, class_name)
-    
-    if(exp_normals == 1):
-        s += "BlenderExport.%s.normals = [" % (class_name)
-        for v in mesh.verts: 
-            s += "%.6f, %.6f, %.6f," % (v.no.x, v.no.y, v.no.z)
-    
-        s += "];\n"
-    if (mesh.vertexColors):
-        s += "BlenderExport.%s.colors = [" % (class_name)
-        for face in mesh.faces:
-            for (vert, color) in zip(face.verts, face.col):
-                s += "%.6f,%.6f,%.6f,%.6f," % ( color.r / 255.0, color.g / 255.0, color.b / 255.0, color.a / 255.0)
-        s += "];\n"
-    if (mesh.faceUV):
-        s += "BlenderExport.%s.texCoords = [" % (class_name)
-        for face in mesh.faces:
-            s += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (face.uv[0][0], face.uv[0][1], face.uv[1][0], face.uv[1][1], face.uv[2][0], face.uv[2][1])
-        s += "];\n"
-
-    if animation_button.val:
-        s += "BlenderExport.%s.frames = [" % (class_name)
-        matrix = ob.getMatrix('worldspace')
-
-        for frame in xrange(animation_start.val, animation_end.val):
-            Blender.Set('curframe', frame)
-            tmpMesh = Mesh.New()
-            tmpMesh.getFromObject(ob.name)
-            tmpMesh.transform(matrix)
-            s+= "["
-            for f in tmpMesh.faces:
-                for v in f.verts:
-                    s += "%.6f,%.6f,%.6f," % (v.co.x, v.co.y, v.co.z)
-            
-            s += "],"
-        s += "];"
-    
-    return s
-
-def export_glge_js(class_name, mesh):
-    s = "var BlenderExport = {};\n"
-    s += "BlenderExport.%s = function() {\n" % (class_name)
-    s += "var obj=new GLGE.Object(\'%s\');\n"  % (class_name)
-    s += "var mesh=new GLGE.Mesh();\n" 
-    vertices = "mesh.setPositions(["
-    normals = "mesh.setNormals(["
-    uvs = "mesh.setUV(["
-    indices = "mesh.setFaces(["
-    indexcount = 0;
-    for f in mesh.faces:
-        vertices += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.verts[0].co.x, f.verts[0].co.y, f.verts[0].co.z,f.verts[1].co.x, f.verts[1].co.y, f.verts[1].co.z,f.verts[2].co.x, f.verts[2].co.y, f.verts[2].co.z)
-        if (f.smooth):
-            normals += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.verts[0].no.x, f.verts[0].no.y, f.verts[0].no.z,f.verts[1].no.x, f.verts[1].no.y, f.verts[1].no.z,f.verts[2].no.x, f.verts[2].no.y, f.verts[2].no.z)
-        else:
-            normals += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.no.x, f.no.y, f.no.z,f.no.x, f.no.y, f.no.z,f.no.x, f.no.y, f.no.z)
-        if (mesh.faceUV):
-            uvs += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.uv[0][0], f.uv[0][1], f.uv[1][0], f.uv[1][1], f.uv[2][0], f.uv[2][1])
-        indices += "%i,%i,%i," % (indexcount,indexcount+1,indexcount+2)
-        indexcount += 3
-        
-    indicies=indices[:len(indices)-1]
-    normals=normals[:len(normals)-1]
-    if (mesh.faceUV):
-        uvs=uvs[:len(uvs)-1]
-    vertices=vertices[:len(vertices)-1]
-    
-    indices += "]);\n";
-    normals += "]);\n";
-    uvs += "]);\n";
-    vertices += "]);\n";
-    
-    s += vertices
-    s += normals
-    if (mesh.faceUV):
-        s += uvs
-    s += indices
-    
-    s += "var material=new GLGE.Material();\n"
-    s += "obj.setMaterial(material);\n"
-    s += "obj.setMesh(mesh);\n"
-    s += "return obj;\n};"
-    print(s)
-    return s
-    
-def export_glge_xml(class_name, mesh):
-    s = "<?xml version=\"1.0\" ?>\n"
-    s += "<glge>\n"
-    s += "<mesh id=\"%s\">\n"  % (class_name)
-    vertices = "<positions>"
-    normals = "<normals>"
-    uvs = "<uv1>"
-    indices = "<faces>"
-    indexcount = 0;
-    
-    for f in mesh.faces:
-        vertices += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.verts[0].co.x, f.verts[0].co.y, f.verts[0].co.z,f.verts[1].co.x, f.verts[1].co.y, f.verts[1].co.z,f.verts[2].co.x, f.verts[2].co.y, f.verts[2].co.z)
-        if (f.smooth):
-            normals += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.verts[0].no.x, f.verts[0].no.y, f.verts[0].no.z,f.verts[1].no.x, f.verts[1].no.y, f.verts[1].no.z,f.verts[2].no.x, f.verts[2].no.y, f.verts[2].no.z)
-        else:
-            normals += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.no.x, f.no.y, f.no.z,f.no.x, f.no.y, f.no.z,f.no.x, f.no.y, f.no.z)
-        #if (mesh.faceUV):
-            #uvs += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.uv[0][0], f.uv[0][1], f.uv[1][0], f.uv[1][1], f.uv[2][0], f.uv[2][1])
-        indices += "%i,%i,%i," % (indexcount,indexcount+1,indexcount+2)
-        indexcount += 3
-    
-    if len(mesh.getUVLayerNames()):
-        uvs = ""
-        uvlcount = 0
-        for uvlayer in mesh.getUVLayerNames():
-            uvlcount = uvlcount + 1
-            print("uvlayer " + uvlayer)
-            mesh.activeUVLayer = uvlayer
-            uvs += "<uv" + str(uvlcount) + ">"
-            
-            for f in mesh.faces:
-                uvs += "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f," % (f.uv[0][0], f.uv[0][1], f.uv[1][0], f.uv[1][1], f.uv[2][0], f.uv[2][1])    
-                
-            uvs=uvs[:len(uvs)-1]
-            uvs += "</uv" + str(uvlcount) + ">\n"    
-        
-    indices=indices[:len(indices)-1]
-    normals=normals[:len(normals)-1]
-    vertices=vertices[:len(vertices)-1]
-    
-    indices += "</faces>\n";
-    normals += "</normals>\n";
-    vertices += "</positions>\n";
-    
-    s += vertices
-    s += normals
-    if (mesh.faceUV):
-        s += uvs
-    s += indices
-    
-    s += "</mesh>\n"
-    s += "</glge>"
-    
-    return s
-
-def event(evt, val):
-    if (evt == Draw.QKEY and not val):
-        Draw.Exit()
-
-def bevent(evt):
-    global EVENT_NOEVENT,EVENT_DRAW,EVENT_EXIT
-    
-    if (evt == EVENT_EXIT):
-        Draw.Exit()
-    elif (evt== EVENT_DRAW):
-        Draw.Redraw()
-    elif (evt== EVENT_EXPORT):
-        sce = bpy.data.scenes.active
-        
-        obs = None
-        
-        if(exp_all == 1):
-            # export all scene objects
-            obs = [ob for ob in sce.objects if ob.type == 'Mesh']
-        else:
-            # export the selected objects
-            obs = [ob for ob in sce.objects.selected if ob.type == 'Mesh']
-        
-        if (len(obs) == 0):
-            Draw.PupMenu("Nothing to export. Please select a Mesh.")
-            Draw.Exit()
-            return
-        
-        singleFile = 0
-        if(engine_menu.val == 6):
-            singleFile = 1
-            out = open(file_button.val, 'w')
-            scn = Scene.GetCurrent()
-            context = scn.getRenderingContext()
-            data_string = "{\"scene\":1,\"fps\":%i,\"objs\":[" % (context.fps)
-            comaSeparate = 0;
-            
-        # export all object names
-        for ob in obs:
-            me = Mesh.New()
-            me.getFromObject(ob,0)
-            class_name = ob.name.replace(".", "")
-            
-            if (not singleFile):
-                ext = ""
-            
-            if (not singleFile):
-                if(engine_menu.val ==4):
-                    ext = ".xml"
-                else:
-                    ext = ".js"
-                out = open(file_button.val+""+class_name+ext, 'w')
-                data_string = ""
-
-            if (engine_menu.val == 1):
-                data_string = export_native(class_name, me, ob)
-            elif(engine_menu.val == 2):
-                data_string = export_scenejs(class_name, me)
-            elif(engine_menu.val == 3):
-                data_string = export_glge_js(class_name, me)
-            elif(engine_menu.val == 4):
-                data_string = export_glge_xml(class_name, me)
-            elif(engine_menu.val == 5):
-                data_string = export_copperlicht(class_name, me)
-            elif(engine_menu.val == 6):
-                # Fix this: must include object's IpoCurves
-                #data_string = data_string+export_scenejson(class_name, me)
-                if (not comaSeparate):
-                    comaSeparate = 1
-                else:
-                    data_string = data_string + ","
-                data_string = data_string+export_objectJson(ob)
-
-            if (not singleFile):
-                out.write(data_string)
-                out.close()
-        
-        if (singleFile):
-            out.write(data_string+"]}")
-            out.close()
-            
-        Draw.PupMenu("Export Successful")
-    elif (evt== EVENT_BROWSEFILE):
-        if (engine_menu.val == 4):
-            Window.FileSelector(FileSelected,"Export .xml", exp_file_name)
-        elif (engine_menu.val == 6):
-            Window.FileSelector(FileSelected,"Export .json", exp_file_name)
-        else:
-            Window.FileSelector(FileSelected,"Export .js", exp_file_name)
-        Draw.Redraw(1)
-
-def FileSelected(file_name):
-    global file_button
-    
-    if file_name != '':
-        file_button.val = file_name
+    # Binary mode packs everything as 16-bit fixed point big-endian arrays, 
+    # taking the absolute value of the floating point original value, the first
+    # 8 bits are the decimal part, last 8 bits are the integral part and then
+    # the sign is swaped if necessary. UVs are packed differently, to obtain
+    # your original approximated UV take the 16-bit int of each coord and divide
+    # it by 8192.0f (keeps sign). Vertex groups are packed with the 10 less
+    # significative bits taking the weight in the range (0 <= weight <= 1)*1023
+    # and the 6 most significative bits as the vertex group. Each group is
+    # preceded by a byte specifying how much groups follow it.
+    # Everything gets Base64 encoded in binary mode.
+    # Think of JSON as a binary-safe transport in this mode.
+    #
+    # Normal mode is the least efficient space-wise but is far more readable.
+    #
+    # Arrays are 'flattened' in both cases.
+    if binary:
+        fixed_proc = lambda x: to_fixed16(x)
+        fixed_pack = lambda arr: base64.encodebytes(struct.pack(">%dh" % len(arr), *arr)).decode('ascii')[:-1]
+        v_co_proc, v_co_pack = fixed_proc, fixed_pack
+        v_normal_proc, v_normal_pack = fixed_proc, fixed_pack
+        v_face_pack = fixed_pack
+        v_uv_proc = lambda x: int(8192.0 * x)
+        v_uv_pack = fixed_pack
+        v_bw_proc = lambda x: ((x[0] & 63) << 10) | (int(x[1] * 1023.0) & 1023)
+        v_bw_pack = lambda x: base64.encodebytes(bytes().join([struct.pack(">B%iH" % len(y), len(y), *y) for y in x])).decode('ascii')[:-1]
     else:
-        cutils.Debug.Debug('ERROR: filename is empty','ERROR')
+        identity = lambda i: i
+        v_co_proc, v_co_pack = identity, identity
+        v_normal_proc, v_normal_pack = identity, identity
+        v_face_pack = identity
+        v_uv_proc, v_uv_pack = identity, identity
+        v_bw_proc, v_bw_pack = identity, identity
+        
+    ome['v'] = v_co_pack([v_co_proc(ax) for v in me.vertices for ax in v.co])
+    ome['n'] = v_normal_pack([v_normal_proc(ax) for v in me.vertices for ax in v.normal])
+    ome['f'] = v_face_pack([idx for f in me.faces for idx in f.vertices])
+    
+    ome['uv'] = []
+    for layer in me.uv_textures:
+        ome['uv'].append(v_uv_pack([v_uv_proc(st) for tex_face in layer.data for uv in tex_face.uv for st in uv]))
+    
+    if armature is not None:
+        ome['bw'] = v_bw_pack([[v_bw_proc((grp.group, grp.weight)) for grp in v.groups] for v in me.vertices])
 
-def draw():
-    global file_button, exp_file_name, animation_button, animation_start, animation_end
-    global engine_menu, engine_name, exp_normals, exp_all
-    global EVENT_NOEVENT, EVENT_DRAW, EVENT_EXIT, EVENT_EXPORT
-    exp_file_name = ""
+        # Put the armature in POSE position
+        #armature.pose_position = 'POSE'
+        
+        #ome['b'] =
+    else:
+        # Export vertex animations
+        pass
+        
+    outp['mesh'] = ome
+    
+    return outp
+    
+def export_scene_json(scene, binary=False):
+    outp = {'scene': scene.name, 'fps': scene.render.fps}
+    
+    outp['objs'] = [object_to_dict(scene, obj, binary) for obj in scene.objects if (obj.type == 'MESH') and (obj.select)]
+    
+    return json.dumps(outp)
 
-    glClear(GL_COLOR_BUFFER_BIT)
-    glRasterPos2i(40, 240)
+def savejson(operator, context,
+    filepath="",
+    use_modifiers=True,
+    use_normals=True,
+    use_uv_coords=True,
+    use_colors=True,
+    in_place_anim=True, 
+    vertex_anim_as_deltas=True, 
+    anim_as_image=True,
+    export_binary=False):
+    
+    sce = context.scene #bpy.data.scenes[0]
 
-    engine_name = "Native WebGL%x1|SceneJS%x2|GLGE JS%x3|GLGE XML%x4|JSON%x6"
-    engine_menu = Draw.Menu(engine_name, EVENT_NOEVENT, 40, 100, 200, 20, engine_menu.val, "Choose your engine")
-
-    file_button = Draw.String('File location: ', EVENT_NOEVENT, 40, 70, 250, 20, file_button.val, 255) 
-    Draw.PushButton('...', EVENT_BROWSEFILE, 300, 70, 30, 20, 'browse file')
-    exp_normals = Draw.Toggle('Export normals', EVENT_NOEVENT, 250, 45, 100, 20, exp_normals.val)
+    with open(filepath, 'wb') as file:
+        file.write(export_scene_json(sce, export_binary).encode('utf-8'))
     
-    anim_down = 0
-    
-    if animation_button.val == 1:
-        anim_down = 1
-    
-    animation_button = Draw.Toggle('Export animation frames (native WebGL only)', EVENT_NOEVENT, 400, 70, 300, 20, animation_button.val, 'Export keyframe animation')
-    animation_start = Draw.Number('Start frame', EVENT_NOEVENT, 400, 45, 160, 20, animation_start.val, 1, 9999)
-    animation_end = Draw.Number('End frame', EVENT_NOEVENT, 400, 20, 160, 20, animation_end.val, 2, 9999)
-    
-    exp_all = Draw.Toggle('Export ALL scene objects', EVENT_NOEVENT, 40, 45, 200, 20, exp_all.val)
-    
-    Draw.Button("Export",EVENT_EXPORT , 40, 20, 80, 18)
-    Draw.Button("Exit",EVENT_EXIT , 140, 20, 80, 18)
-    
-def save(operator, context, filepath="", frame_start=1, frame_end=300, fps=25):
-    print("nada aun")
-    
-def savejson(operator, context, filepath="", use_modifiers=True, use_normals=True, use_uv_coords=True, use_colors=True):
-    sce = bpy.data.scenes[0]
-
-    obs = [ob for ob in sce.objects if (ob.type == 'MESH') and (ob.select)]
+    """obs = [ob for ob in sce.objects if (ob.type == 'MESH') and (ob.select)]
 
     # if nothing is selected, export everything
     if len(obs) == 0:
@@ -585,42 +377,14 @@ def savejson(operator, context, filepath="", use_modifiers=True, use_normals=Tru
     ob_string = ""
     for ob in obs:
         me = ob.to_mesh(sce, True, "PREVIEW")
-        ob_string = "%s,%s" % (ob_string, export_objectJson(ob, me))
+        ob_string = "%s,%s" % (ob_string, export_objectJson(ob, me, sce))
         
     data_string = "%s%s]}" % (data_string, ob_string[1:])
     
     with open(filepath, 'wb') as file:
-        file.write(data_string.encode('utf-8'))
+        file.write(data_string.encode('utf-8'))"""
 
     return "FINISHED"
-
-class ExportWebgl(bpy.types.Operator, ExportHelper):
-    '''Export objects as a WebGL object with normals and texture coordinates.'''
-    bl_idname = "export_scene.webgl_js"
-    bl_label = "Export WebGL"
-
-    filename_ext = ".js"
-    filter_glob = StringProperty(default="*.js", options={'HIDDEN'})
-
-    use_modifiers = BoolProperty(name="Apply Modifiers", description="Apply Modifiers to the exported mesh", default=True)
-    use_normals = BoolProperty(name="Normals", description="Export Normals for smooth and hard shaded faces", default=True)
-    use_uv_coords = BoolProperty(name="UVs", description="Exort the active UV layer", default=True)
-    use_colors = BoolProperty(name="Vertex Colors", description="Exort the active vertex color layer", default=True)
-
-    def execute(self, context):
-        filepath = self.filepath
-        filepath = bpy.path.ensure_ext(filepath, self.filename_ext)
-        return save(self, context, **self.as_keywords(ignore=("check_existing", "filter_glob")))
-
-    def draw(self, context):
-        layout = self.layout
-
-        row = layout.row()
-        row.prop(self, "use_modifiers")
-        row.prop(self, "use_normals")
-        row = layout.row()
-        row.prop(self, "use_uv_coords")
-        row.prop(self, "use_colors")
 
 class ExportJSON(bpy.types.Operator, ExportHelper):
     '''Export objects as a JSON object with normals and texture coordinates.'''
@@ -632,8 +396,12 @@ class ExportJSON(bpy.types.Operator, ExportHelper):
 
     use_modifiers = BoolProperty(name="Apply Modifiers", description="Apply Modifiers to the exported mesh", default=True)
     use_normals = BoolProperty(name="Normals", description="Export Normals for smooth and hard shaded faces", default=True)
-    use_uv_coords = BoolProperty(name="UVs", description="Exort the active UV layer", default=True)
-    use_colors = BoolProperty(name="Vertex Colors", description="Exort the active vertex color layer", default=True)
+    use_uv_coords = BoolProperty(name="UVs", description="Export the active UV layer", default=True)
+    use_colors = BoolProperty(name="Vertex Colors", description="Export the active vertex color layer", default=True)
+    in_place_anim = BoolProperty(name="InPlace Anim", description="Normalize animation for in-place animation", default=True)
+    vertex_anim_as_deltas = BoolProperty(name="Vertex Deltas", description="Export vertex position changes as deltas", default=True)
+    anim_as_image = BoolProperty(name="Anim on Image", description="Export animation data as an embedded image for shader animations", default=True)
+    export_binary = BoolProperty(name="Export mostly binary", description="Export most arrays as Base64 encoded arrays", default=False)
 
     def execute(self, context):
         filepath = self.filepath
@@ -649,10 +417,16 @@ class ExportJSON(bpy.types.Operator, ExportHelper):
         row = layout.row()
         row.prop(self, "use_uv_coords")
         row.prop(self, "use_colors")
+        row = layout.row()
+        row.prop(self, "in_place_anim")
+        row.prop(self, "vertex_anim_as_deltas")
+        row = layout.row()
+        row.prop(self, "anim_as_image")
+        row.prop(self, "export_binary")
         
 
 def menu_func_export(self, context):
-    self.layout.operator(ExportWebgl.bl_idname, text="WebGL (.js)")
+    #self.layout.operator(ExportWebgl.bl_idname, text="WebGL (.js)") # unmaintained
     self.layout.operator(ExportJSON.bl_idname, text="WebGL JSON (.json)")
 
 
