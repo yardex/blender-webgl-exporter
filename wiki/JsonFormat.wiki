@@ -14,3 +14,5 @@ This format stresses minification of the JSON output, so it isn't very human rea
 {{{
 JSON example coming soon
 }}}
+
+*WARNING* The JSON exporter has been forked from this project due to sveral factors. The new project is at http://code.google.com/p/blender-machete/
